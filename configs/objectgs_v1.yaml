@@ -1,0 +1,15 @@
+# ObjectGS default experimental configuration
+
+training:
+  iterations: 7000
+
+densification:
+  mask_normalization: true
+  exponent: 1.0
+
+masks:
+  directory: masks
+
+evaluation:
+  masked_psnr: true
+  masked_l1: true

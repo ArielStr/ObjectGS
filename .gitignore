@@ -1,0 +1,49 @@
+# Python
+__pycache__/
+*.py[cod]
+.ipynb_checkpoints/
+
+# Environments
+.venv/
+venv/
+env/
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Datasets
+data/
+datasets/
+scenes/
+
+# Training outputs
+output/
+outputs/
+runs/
+checkpoints/
+
+# Large 3D artifacts
+*.ply
+*.pt
+*.pth
+*.ckpt
+
+# Images generated during experiments
+renders/
+results/raw/
+
+# COLMAP databases
+database.db
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+# Internal development / historical snapshots
+runtime_smoke_snapshot/
+objectgs/reference_v1/
+objectgs_v1.patch
+
