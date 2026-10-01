@@ -93,6 +93,17 @@ def main():
     )
 
     parser.add_argument(
+        "--sift-gpu",
+        choices=["auto", "on", "off"],
+        default="auto",
+        help=(
+            "Control GPU use for SIFT extraction and matching. "
+            "'auto' preserves COLMAP defaults, 'on' forces GPU, "
+            "and 'off' forces CPU. Default: auto."
+        ),
+    )
+
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="Remove an existing workspace before running.",
@@ -148,6 +159,16 @@ def main():
 
     single_camera = "1" if args.single_camera else "0"
 
+    sift_extraction_args = []
+    sift_matching_args = []
+
+    if args.sift_gpu == "on":
+        sift_extraction_args = ["--SiftExtraction.use_gpu", "1"]
+        sift_matching_args = ["--SiftMatching.use_gpu", "1"]
+    elif args.sift_gpu == "off":
+        sift_extraction_args = ["--SiftExtraction.use_gpu", "0"]
+        sift_matching_args = ["--SiftMatching.use_gpu", "0"]
+
     commands = []
 
     # -----------------------------------------------------
@@ -161,6 +182,7 @@ def main():
         "--image_path", images,
         "--ImageReader.camera_model", args.camera_model,
         "--ImageReader.single_camera", single_camera,
+        *sift_extraction_args,
     ])
 
     # -----------------------------------------------------
@@ -172,12 +194,14 @@ def main():
             "colmap",
             "exhaustive_matcher",
             "--database_path", database,
+            *sift_matching_args,
         ])
     else:
         commands.append([
             "colmap",
             "sequential_matcher",
             "--database_path", database,
+            *sift_matching_args,
         ])
 
     # -----------------------------------------------------
@@ -199,6 +223,7 @@ def main():
     print(f"Camera model  : {args.camera_model}")
     print(f"Single camera : {args.single_camera}")
     print(f"Matcher       : {args.matcher}")
+    print(f"SIFT GPU      : {args.sift_gpu}")
     print(f"Dry run       : {args.dry_run}")
 
     for cmd in commands:
@@ -251,8 +276,10 @@ def main():
         output = result.stdout + result.stderr
 
         for line in output.splitlines():
-            if line.strip().startswith("Registered images:"):
-                return int(line.split(":", 1)[1].strip())
+            marker = "Registered images:"
+            if marker in line:
+                value = line.split(marker, 1)[1].strip()
+                return int(value)
 
         raise RuntimeError(
             f"Could not determine registered image count for {model_dir}"
