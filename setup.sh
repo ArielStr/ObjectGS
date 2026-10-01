@@ -36,9 +36,51 @@ git -C "$GS_DIR" apply --check "$PATCH"
 echo "[ObjectGS] Applying ObjectGS patch..."
 git -C "$GS_DIR" apply "$PATCH"
 
+# ---------------------------------------------------------
+# Modern CUDA compatibility
+# ---------------------------------------------------------
+
+RASTERIZER_HEADER="$GS_DIR/submodules/diff-gaussian-rasterization/cuda_rasterizer/rasterizer_impl.h"
+
+if ! grep -q '#include <cstdint>' "$RASTERIZER_HEADER"; then
+    echo "[ObjectGS] Applying rasterizer compatibility fix..."
+    sed -i '/#include <vector>/a #include <cstdint>' "$RASTERIZER_HEADER"
+fi
+
+# ---------------------------------------------------------
+# Python / CUDA runtime
+# ---------------------------------------------------------
+
+echo "[ObjectGS] Installing build dependency..."
+python -m pip install ninja
+
+echo "[ObjectGS] Installing diff-gaussian-rasterization..."
+python -m pip install     "$GS_DIR/submodules/diff-gaussian-rasterization"     --no-build-isolation
+
+echo "[ObjectGS] Installing simple-knn..."
+python -m pip install     "$GS_DIR/submodules/simple-knn"     --no-build-isolation
+
+echo "[ObjectGS] Installing fused-ssim..."
+python -m pip install     "$GS_DIR/submodules/fused-ssim"     --no-build-isolation
+
+echo "[ObjectGS] Verifying training runtime..."
+python - <<'PY'
+import importlib
+
+modules = [
+    "diff_gaussian_rasterization",
+    "simple_knn",
+    "fused_ssim",
+]
+
+for module in modules:
+    importlib.import_module(module)
+    print(f"[ObjectGS] import OK: {module}")
+PY
+
 echo
 echo "========================================"
-echo " ObjectGS core ready"
+echo " ObjectGS runtime ready"
 echo "========================================"
 echo
 echo "3DGS directory:"
