@@ -61,26 +61,44 @@ the original 3DGS heuristic.
 The correction can be disabled for ablation experiments.
 
 
-## Preliminary result
+## Visual comparison
 
-Reference experiment: 36 registered views of a single object.
+We compare ObjectGS with the standard 3D Gaussian Splatting pipeline
+on the same multi-view capture.
 
-| Method | Iterations | Gaussians | Masked PSNR | Masked L1 |
-|---|---:|---:|---:|---:|
-| Mask-loss baseline | 3K | 182,777 | 24.75 dB | 0.0302 |
-| ObjectGS | 3K | 4,163 | 23.03 dB | 0.0390 |
-| Mask-loss baseline | 7K | 409,451 | 28.23 dB | 0.0192 |
-| ObjectGS | 7K | 6,295 | 24.85 dB | 0.0306 |
+Both visualizations below use the same camera trajectory.
 
-At 7K iterations, ObjectGS uses approximately **65x fewer Gaussians**
-than the mask-loss baseline.
+<table>
+<tr>
+<td align="center"><b>Standard 3DGS</b></td>
+<td align="center"><b>ObjectGS</b></td>
+</tr>
+<tr>
+<td><img src="assets/object_02/full_3dgs_orbit.gif" width="100%"></td>
+<td><img src="assets/object_02/objectgs_orbit.gif" width="100%"></td>
+</tr>
+<tr>
+<td align="center">399,965 Gaussians</td>
+<td align="center">6,295 Gaussians</td>
+</tr>
+</table>
 
-ObjectGS at 7K also reaches approximately the same masked PSNR as the
-3K baseline while using approximately **29x fewer Gaussians**.
+## Result
 
-These results are preliminary and currently come from a single object.
-Evaluation on additional objects is planned.
+On this capture, the standard full-scene 3DGS reconstruction contains
+**399,965 Gaussians**, while ObjectGS represents the target object with
+**6,295 Gaussians**.
 
+| Method | Gaussians |
+|---|---:|
+| Standard 3DGS | 399,965 |
+| ObjectGS | 6,295 |
+
+This corresponds to approximately **63.5× fewer Gaussians** for the
+object-centric representation in this experiment.
+
+These results are preliminary and currently cover a single evaluation
+object. Evaluation on additional objects is in progress.
 
 ## Pipeline
 
