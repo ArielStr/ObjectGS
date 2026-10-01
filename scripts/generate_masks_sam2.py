@@ -212,6 +212,21 @@ def main():
     images = collect_images(args.images)
     prompts = load_prompts(args.prompts)
 
+    # Normalize prompt keys to image stems so both
+    # "IMG_5544" and "IMG_5544.jpeg" are accepted.
+    normalized_prompts = {}
+    for key, prompt in prompts.items():
+        stem = Path(key).stem
+
+        if stem in normalized_prompts:
+            raise SystemExit(
+                f"Duplicate prompt after filename normalization: {stem}"
+            )
+
+        normalized_prompts[stem] = prompt
+
+    prompts = normalized_prompts
+
     if not images:
         raise SystemExit("No images found.")
 
@@ -260,7 +275,7 @@ def main():
             continue
 
         with Image.open(image_path) as pil:
-            image = np.asarray(pil.convert("RGB"))
+            image = np.asarray(pil.convert("RGB")).copy()
 
         mask, score = predict_mask(
             predictor,
@@ -272,7 +287,6 @@ def main():
 
         Image.fromarray(
             output,
-            mode="L",
         ).save(output_path)
 
         foreground = float(mask.mean())
