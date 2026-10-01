@@ -51,8 +51,8 @@ fi
 # Python / CUDA runtime
 # ---------------------------------------------------------
 
-echo "[ObjectGS] Installing build dependency..."
-python -m pip install ninja
+echo "[ObjectGS] Installing Python dependencies..."
+python -m pip install ninja plyfile
 
 echo "[ObjectGS] Installing diff-gaussian-rasterization..."
 python -m pip install     "$GS_DIR/submodules/diff-gaussian-rasterization"     --no-build-isolation
