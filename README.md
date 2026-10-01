@@ -211,6 +211,53 @@ Masks use the same image stem as their corresponding RGB image.
 
 ## Scripts
 
+### Generate masks with SAM2
+
+ObjectGS expects one binary foreground mask per input image. Masks can be
+generated with [SAM2](https://github.com/facebookresearch/sam2) using the
+provided wrapper.
+
+Install the official SAM2 package:
+
+```bash
+git clone https://github.com/facebookresearch/sam2.git
+cd sam2
+pip install -e .
+```
+
+Download a SAM2 checkpoint. The Object 02 experiment uses
+`sam2.1_hiera_small.pt` with the corresponding
+`configs/sam2.1/sam2.1_hiera_s.yaml` model configuration.
+
+Prompts are supplied as JSON and may be keyed either by image stem or by
+the full image filename:
+
+```json
+{
+  "IMG_5544.jpeg": {
+    "box": [1415, 1429, 2067, 1812]
+  }
+}
+```
+
+Box coordinates follow `[x0, y0, x1, y1]`. Point prompts are also
+supported by the script.
+
+Generate the masks:
+
+```bash
+python scripts/generate_masks_sam2.py \
+    --images /path/to/images \
+    --output /path/to/masks \
+    --prompts /path/to/prompts.json \
+    --model-cfg configs/sam2.1/sam2.1_hiera_s.yaml \
+    --checkpoint /path/to/sam2.1_hiera_small.pt \
+    --device cuda
+```
+
+The generated masks are binary PNG files named by image stem. Validate
+them before continuing with the reconstruction pipeline.
+
 ### Validate masks
 
     python scripts/validate_masks.py \
