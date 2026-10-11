@@ -1,0 +1,6 @@
+# ObjectGS Python dependencies
+numpy
+Pillow
+pycolmap
+plyfile
+tqdm

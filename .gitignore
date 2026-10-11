@@ -47,3 +47,9 @@ runtime_smoke_snapshot/
 objectgs/reference_v1/
 objectgs_v1.patch
 
+# Installed upstream repositories
+third_party/
+
+# Local experiment artifacts
+*.log
+*.tmp

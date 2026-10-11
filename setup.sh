@@ -1,93 +1,188 @@
 #!/usr/bin/env bash
-set -e
+set -euo pipefail
 
-OBJECTGS_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+GS_DIR="$ROOT/third_party/gaussian-splatting"
+PATCH="$ROOT/objectgs.patch"
 
 UPSTREAM_URL="https://github.com/graphdeco-inria/gaussian-splatting.git"
 UPSTREAM_COMMIT="54c035f7834b564019656c3e3fcc3646292f727d"
 
-THIRD_PARTY="$OBJECTGS_ROOT/third_party"
-GS_DIR="$THIRD_PARTY/gaussian-splatting"
-PATCH="$OBJECTGS_ROOT/objectgs.patch"
+MODE=""
+INSTALL_COLMAP=false
+INSTALL_SAM2=false
 
-echo "========================================"
-echo " ObjectGS setup"
-echo "========================================"
+usage() {
+    echo "Usage: bash setup.sh --mode {cpu|gpu} [--install-colmap] [--install-sam2]"
+}
 
-mkdir -p "$THIRD_PARTY"
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --mode)
+            [[ $# -ge 2 ]] || { usage; exit 1; }
+            MODE="$2"
+            shift 2
+            ;;
+        --install-sam2)
+            INSTALL_SAM2=true
+            shift
+            ;;
+        --install-colmap)
+            INSTALL_COLMAP=true
+            shift
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1"
+            usage
+            exit 1
+            ;;
+    esac
+done
 
-if [ -d "$GS_DIR" ]; then
-    echo "[ObjectGS] Removing existing 3DGS checkout..."
-    rm -rf "$GS_DIR"
+if [[ "$MODE" != "cpu" && "$MODE" != "gpu" ]]; then
+    usage
+    exit 1
 fi
 
-echo "[ObjectGS] Cloning official 3D Gaussian Splatting..."
-git clone "$UPSTREAM_URL" "$GS_DIR"
+command -v python >/dev/null || {
+    echo "ERROR: Python not found"
+    exit 1
+}
 
-echo "[ObjectGS] Checking out pinned upstream commit..."
-git -C "$GS_DIR" checkout "$UPSTREAM_COMMIT"
+echo "[ObjectGS] Installing core dependencies..."
+python -m pip install -r "$ROOT/requirements.txt"
 
-echo "[ObjectGS] Initializing upstream submodules..."
+if [[ "$INSTALL_COLMAP" == true ]]; then
+    if command -v colmap >/dev/null 2>&1; then
+        echo "[ObjectGS] COLMAP already installed."
+    elif command -v apt-get >/dev/null 2>&1; then
+        echo "[ObjectGS] Installing COLMAP via apt..."
+        if [[ "$(id -u)" -eq 0 ]]; then
+            apt-get update -qq
+            apt-get install -y colmap
+        elif command -v sudo >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y colmap
+        else
+            echo "ERROR: Root privileges or sudo required."
+            exit 1
+        fi
+    else
+        echo "ERROR: Automatic COLMAP installation requires apt-get."
+        exit 1
+    fi
+fi
+
+if [[ "$INSTALL_SAM2" == true ]]; then
+    echo "[ObjectGS] Installing official SAM2..."
+    python -m pip install "sam2"
+
+    python - <<'PY_SAM2'
+from sam2.build_sam import build_sam2
+from sam2.sam2_image_predictor import SAM2ImagePredictor
+print("[ObjectGS] SAM2 imports OK")
+PY_SAM2
+fi
+
+if [[ "$MODE" == "cpu" ]]; then
+    echo "[ObjectGS] CPU setup complete."
+    echo "[ObjectGS] GPU training extensions were not installed."
+    exit 0
+fi
+
+echo "[ObjectGS] Checking GPU build prerequisites..."
+
+command -v nvcc >/dev/null || {
+    echo "ERROR: nvcc not found. Install CUDA toolkit."
+    exit 1
+}
+
+python - <<'PY_CHECK'
+import torch
+import sys
+
+if not torch.cuda.is_available():
+    sys.exit("ERROR: CUDA is not available in PyTorch.")
+
+print("PyTorch:", torch.__version__)
+print("CUDA:", torch.version.cuda)
+PY_CHECK
+
+python -m pip install ninja
+
+mkdir -p "$ROOT/third_party"
+
+if [[ ! -d "$GS_DIR/.git" ]]; then
+    if [[ -e "$GS_DIR" ]]; then
+        echo "ERROR: Existing Graphdeco directory is not a Git checkout."
+        exit 1
+    fi
+
+    echo "[ObjectGS] Cloning Graphdeco..."
+    git clone "$UPSTREAM_URL" "$GS_DIR"
+
+    echo "[ObjectGS] Checking out pinned commit..."
+    git -C "$GS_DIR" checkout "$UPSTREAM_COMMIT"
+fi
+
+CURRENT_COMMIT="$(git -C "$GS_DIR" rev-parse HEAD)"
+
+if [[ "$CURRENT_COMMIT" != "$UPSTREAM_COMMIT" ]]; then
+    echo "ERROR: Existing Graphdeco checkout is at a different commit."
+    echo "Expected: $UPSTREAM_COMMIT"
+    echo "Found:    $CURRENT_COMMIT"
+    exit 1
+fi
+
 git -C "$GS_DIR" submodule update --init --recursive
 
-echo "[ObjectGS] Verifying ObjectGS patch..."
-git -C "$GS_DIR" apply --check "$PATCH"
-
-echo "[ObjectGS] Applying ObjectGS patch..."
-git -C "$GS_DIR" apply "$PATCH"
-
-# ---------------------------------------------------------
-# Modern CUDA compatibility
-# ---------------------------------------------------------
+if git -C "$GS_DIR" apply --check "$PATCH"; then
+    echo "[ObjectGS] Applying patch..."
+    git -C "$GS_DIR" apply "$PATCH"
+elif git -C "$GS_DIR" apply --reverse --check "$PATCH"; then
+    echo "[ObjectGS] Patch already applied."
+else
+    echo "ERROR: ObjectGS patch cannot be applied cleanly."
+    exit 1
+fi
 
 RASTERIZER_HEADER="$GS_DIR/submodules/diff-gaussian-rasterization/cuda_rasterizer/rasterizer_impl.h"
 
+if [[ ! -f "$RASTERIZER_HEADER" ]]; then
+    echo "ERROR: Rasterizer header missing."
+    exit 1
+fi
+
 if ! grep -q '#include <cstdint>' "$RASTERIZER_HEADER"; then
-    echo "[ObjectGS] Applying rasterizer compatibility fix..."
     sed -i '/#include <vector>/a #include <cstdint>' "$RASTERIZER_HEADER"
 fi
 
-# ---------------------------------------------------------
-# Python / CUDA runtime
-# ---------------------------------------------------------
+echo "[ObjectGS] Installing CUDA extensions..."
 
-echo "[ObjectGS] Installing Python dependencies..."
-python -m pip install ninja plyfile
+for extension in \
+    diff-gaussian-rasterization \
+    simple-knn \
+    fused-ssim
+do
+    python -m pip install \
+        "$GS_DIR/submodules/$extension" \
+        --no-build-isolation
+done
 
-echo "[ObjectGS] Installing diff-gaussian-rasterization..."
-python -m pip install     "$GS_DIR/submodules/diff-gaussian-rasterization"     --no-build-isolation
-
-echo "[ObjectGS] Installing simple-knn..."
-python -m pip install     "$GS_DIR/submodules/simple-knn"     --no-build-isolation
-
-echo "[ObjectGS] Installing fused-ssim..."
-python -m pip install     "$GS_DIR/submodules/fused-ssim"     --no-build-isolation
-
-echo "[ObjectGS] Verifying training runtime..."
-python - <<'PY'
+python - <<'PY_VERIFY'
 import importlib
 
-modules = [
+for module in [
     "diff_gaussian_rasterization",
     "simple_knn",
     "fused_ssim",
-]
-
-for module in modules:
+]:
     importlib.import_module(module)
-    print(f"[ObjectGS] import OK: {module}")
-PY
+    print("[ObjectGS] OK:", module)
+PY_VERIFY
 
-echo
-echo "========================================"
-echo " ObjectGS runtime ready"
-echo "========================================"
-echo
-echo "3DGS directory:"
-echo "  $GS_DIR"
-echo
-echo "Pinned commit:"
-echo "  $UPSTREAM_COMMIT"
-echo
-echo "ObjectGS patch:"
-echo "  $PATCH"
+echo "[ObjectGS] GPU setup complete."
