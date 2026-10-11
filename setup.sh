@@ -86,6 +86,47 @@ from sam2.build_sam import build_sam2
 from sam2.sam2_image_predictor import SAM2ImagePredictor
 print("[ObjectGS] SAM2 imports OK")
 PY_SAM2
+
+    echo "[ObjectGS] Preparing SAM2 checkpoint..."
+    mkdir -p "$ROOT/checkpoints"
+
+    python - "$ROOT/checkpoints/sam2.1_hiera_small.pt" <<'PY_CHECKPOINT'
+import os
+import sys
+import tempfile
+import urllib.request
+from pathlib import Path
+
+destination = Path(sys.argv[1])
+url = (
+    "https://dl.fbaipublicfiles.com/segment_anything_2/"
+    "092824/sam2.1_hiera_small.pt"
+)
+
+def valid(path):
+    return path.is_file() and path.stat().st_size > 100_000_000
+
+if valid(destination):
+    print("[ObjectGS] SAM2 checkpoint already exists.")
+else:
+    with tempfile.NamedTemporaryFile(
+        dir=destination.parent,
+        prefix=".sam2_download_",
+        delete=False
+    ) as tmp:
+        temporary = Path(tmp.name)
+
+    try:
+        print("[ObjectGS] Downloading SAM2 checkpoint...")
+        urllib.request.urlretrieve(url, temporary)
+        if not valid(temporary):
+            raise RuntimeError("Downloaded SAM2 checkpoint is invalid.")
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+print("[ObjectGS] SAM2 checkpoint ready:", destination)
+PY_CHECKPOINT
 fi
 
 if [[ "$MODE" == "cpu" ]]; then

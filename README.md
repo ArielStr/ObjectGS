@@ -449,3 +449,9 @@ SAM 2 can optionally be used for object-mask generation.
 
 See the upstream projects and repository licensing information before
 redistributing or using the software.
+
+### SAM2 checkpoint
+
+When `setup.sh` is run with `--install-sam2`, it automatically downloads the official SAM2.1 Hiera Small checkpoint to `checkpoints/sam2.1_hiera_small.pt`.
+
+The checkpoint is reused on subsequent setup runs and is excluded from Git. Pass its path to the pipeline using `--sam-checkpoint`.

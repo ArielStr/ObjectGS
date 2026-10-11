@@ -53,3 +53,6 @@ third_party/
 # Local experiment artifacts
 *.log
 *.tmp
+
+# Downloaded model weights
+/checkpoints/
