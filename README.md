@@ -455,3 +455,56 @@ redistributing or using the software.
 When `setup.sh` is run with `--install-sam2`, it automatically downloads the official SAM2.1 Hiera Small checkpoint to `checkpoints/sam2.1_hiera_small.pt`.
 
 The checkpoint is reused on subsequent setup runs and is excluded from Git. Pass its path to the pipeline using `--sam-checkpoint`.
+
+## SAM2 Video Mask Generation
+
+ObjectGS supports generating object masks from an ordered sequence
+of video frames using SAM2 Video Tracking.
+
+Unlike per-image SAM2 prompting, this workflow requires only one
+positive point in the first frame. SAM2 propagates the segmentation
+through the remaining frames.
+
+### Example
+
+    python scripts/generate_masks_sam2_video.py \
+      --images /path/to/frames \
+      --output /path/to/masks \
+      --checkpoint checkpoints/sam2.1_hiera_small.pt \
+      --point 1080 1350 \
+      --device cuda \
+      --precision bf16
+
+The point coordinates are specified in the original first-frame
+image resolution.
+
+### Requirements
+
+- Install SAM2 using `setup.sh --install-sam2`.
+- Input frames must be JPEG images with numeric frame ordering.
+  Examples: `frame_0000.jpg`, `frame_0001.jpg`.
+- Frames must represent a temporally ordered video sequence.
+- Use a CUDA GPU for BF16 inference.
+
+The script automatically creates temporary numeric filenames
+required by SAM2 without modifying the source images.
+
+### Output
+
+For each input image, the script creates a binary grayscale PNG:
+
+- Object pixels: 255 (white)
+- Background pixels: 0 (black)
+- Resolution: identical to the source image
+- Filename: `<image_stem>.png`
+
+The generated masks are compatible with ObjectGS scene preparation
+and object-only SfM initialization.
+
+### Validation
+
+    python scripts/validate_masks.py \
+      --images /path/to/frames \
+      --masks /path/to/masks
+
+Inspect the generated masks before training.
