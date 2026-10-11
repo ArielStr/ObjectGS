@@ -157,8 +157,9 @@ if [[ ! -f "$RASTERIZER_HEADER" ]]; then
     exit 1
 fi
 
-if ! grep -q '#include <cstdint>' "$RASTERIZER_HEADER"; then
-    sed -i '/#include <vector>/a #include <cstdint>' "$RASTERIZER_HEADER"
+if ! grep -Fq '#include <cstdint>' "$RASTERIZER_HEADER"; then
+    echo "[ObjectGS] Adding missing cstdint header..."
+    sed -i '1i #include <cstdint>' "$RASTERIZER_HEADER"
 fi
 
 echo "[ObjectGS] Installing CUDA extensions..."
