@@ -11,6 +11,41 @@ implementation and modifies both the training objective and
 densification behavior for small foreground objects.
 
 
+## Quick Start
+
+Install ObjectGS:
+
+    git clone https://github.com/ArielStr/ObjectGS.git
+    cd ObjectGS
+    bash setup.sh --mode gpu --install-colmap --install-sam2
+
+Prepare multi-view RGB images and a JSON file containing
+SAM2 box prompts for each image.
+
+Download the matching SAM2 checkpoint separately.
+
+Run the complete pipeline:
+
+    python scripts/run_pipeline.py --images data/my_object/images --prompts data/my_object/prompts.json --sam-checkpoint checkpoints/sam2.1_hiera_small.pt --output outputs/my_object --iterations 7000 --sift-gpu off
+
+The pipeline performs SAM2 segmentation, COLMAP reconstruction,
+object-only SfM filtering, scene preparation, and ObjectGS training.
+
+Final model:
+
+    outputs/my_object/objectgs_7000/point_cloud/iteration_7000/point_cloud.ply
+
+### Resume
+
+Existing stages are skipped when their outputs pass basic validation.
+Use a fresh output directory when changing inputs or parameters.
+The MVP does not track input or configuration changes automatically.
+The --force option requires a new or empty output directory.
+
+In headless Colab environments, --sift-gpu off avoids COLMAP
+OpenGL context issues. ObjectGS training still uses CUDA.
+
+
 ## Motivation
 
 Standard 3D Gaussian Splatting is designed for full-scene
@@ -140,7 +175,7 @@ undistorted RGB   undistorted masks
     compact object Gaussian model
 
 Masks can be produced manually or by an external segmentation model.
-SAM 2 support is being integrated as an optional mask-generation step.
+SAM 2 mask generation is supported through `scripts/generate_masks_sam2.py`.
 
 
 ## Object-only SfM initialization
@@ -349,6 +384,21 @@ This provides an end-to-end reproducible path from the original
 COLMAP reconstruction and masks to the ObjectGS training scene.
 
 
+### Clean-runtime reproduction (October 2026)
+
+| Metric | Original | Reproduced |
+|---|---:|---:|
+| Registered images | 36 | 36 |
+| Full SfM points | 2,536 | 2,504 |
+| Object SfM points | 1,736 | 1,724 |
+| Gaussians after 7K | 5,585 | 5,623 |
+
+The Gaussian count differs by 0.68% from the reference run.
+SAM2 box prompts were derived from ground-truth masks.
+This is a box-prompt-guided reproduction, not automatic detection.
+Similar counts do not prove identical geometry or visual quality.
+
+
 ## Upstream 3DGS
 
 ObjectGS is developed against a pinned version of the original
@@ -384,8 +434,7 @@ Implemented:
 
 Current work:
 
-- validate SAM 2 mask generation in a clean GPU runtime
-- evaluate additional objects
+- evaluate end-to-end reconstruction on additional objects
 - perform controlled ablations
 - measure reconstruction quality vs. Gaussian count
 - add qualitative renders and comparison figures
