@@ -23,6 +23,55 @@ def image_files(folder):
             and p.suffix.lower() in IMAGE_EXTS]
 
 
+
+def frames_ok(folder, video, fps, quality=2):
+    """Validate extracted frames and their source video settings."""
+    manifest_path = folder / "frames_manifest.json"
+
+    if not manifest_path.is_file():
+        return False
+
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        stat = video.stat()
+
+        if data.get("video") != str(video):
+            return False
+        if data.get("video_size") != stat.st_size:
+            return False
+        if data.get("video_mtime_ns") != stat.st_mtime_ns:
+            return False
+        if data.get("fps") != fps:
+            return False
+        if data.get("quality") != quality:
+            return False
+
+        names = data.get("frames")
+        if not isinstance(names, list) or not names:
+            return False
+        if len(names) != len(set(names)):
+            return False
+        if any(
+            not isinstance(name, str)
+            or not name.startswith("frame_")
+            or not name.endswith(".jpg")
+            for name in names
+        ):
+            return False
+
+        actual = {p.name for p in image_files(folder)}
+        if actual != set(names):
+            return False
+
+        return all(
+            (folder / name).stat().st_size > 0
+            for name in names
+        )
+
+    except (OSError, ValueError, TypeError, KeyError):
+        return False
+
+
 def model_ok(folder):
     return folder.is_dir() and all(
         (folder / name).is_file() and (folder / name).stat().st_size > 0
@@ -72,12 +121,54 @@ def masks_ok(folder, images):
     return True
 
 
-def colmap_ok(folder):
-    return (
-        model_ok(folder / "sparse/0")
-        and model_ok(folder / "undistorted/sparse")
+def registered_image_count(model_dir):
+    """Read registered camera count from COLMAP model_analyzer."""
+    if not model_ok(model_dir):
+        return 0
+
+    try:
+        result = subprocess.run(
+            [
+                "colmap", "model_analyzer",
+                "--path", str(model_dir),
+            ],
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+
+        for line in (result.stdout + result.stderr).splitlines():
+            if "Registered images:" in line:
+                return int(line.split("Registered images:", 1)[1].strip())
+
+    except (OSError, subprocess.CalledProcessError, ValueError):
+        return 0
+
+    return 0
+
+
+def colmap_ok(folder, total_images, min_ratio=0.70, min_images=10):
+    """Validate reconstruction files and registered camera coverage."""
+    original = folder / "sparse/0"
+    undistorted = folder / "undistorted/sparse"
+
+    if not (
+        model_ok(original)
+        and model_ok(undistorted)
         and bool(image_files(folder / "undistorted/images"))
+    ):
+        return False
+
+    registered = registered_image_count(original)
+    ratio = registered / total_images if total_images else 0.0
+
+    print(
+        f"[COLMAP QUALITY] Registered: {registered}/{total_images} "
+        f"({ratio:.1%}), required: >= {min_images} and >= {min_ratio:.0%}",
+        flush=True,
     )
+
+    return registered >= min_images and ratio >= min_ratio
 
 
 def scene_ok(folder):
@@ -147,8 +238,12 @@ def main():
     parser = argparse.ArgumentParser(
         description="Run ObjectGS end-to-end."
     )
-    parser.add_argument("--images", type=Path, required=True)
-    parser.add_argument("--prompts", type=Path, required=True)
+    inputs = parser.add_mutually_exclusive_group(required=True)
+    inputs.add_argument("--images", type=Path)
+    inputs.add_argument("--video", type=Path)
+    parser.add_argument("--point", nargs=2, type=float, metavar=("X", "Y"))
+    parser.add_argument("--fps", type=float, default=3.0)
+    parser.add_argument("--prompts", type=Path)
     parser.add_argument("--sam-checkpoint", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
@@ -171,15 +266,30 @@ def main():
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
-    args.images = args.images.expanduser().resolve()
-    args.prompts = args.prompts.expanduser().resolve()
+    if args.video:
+        args.video = args.video.expanduser().resolve()
+        if not args.video.is_file():
+            parser.error(f"Video not found: {args.video}")
+        if args.point is None:
+            parser.error("--point X Y is required with --video")
+        if args.prompts is not None:
+            parser.error("--prompts is only supported with --images")
+        if args.fps <= 0:
+            parser.error("--fps must be positive")
+    else:
+        args.images = args.images.expanduser().resolve()
+        if args.prompts is None:
+            parser.error("--prompts is required with --images")
+
+    if args.prompts is not None:
+        args.prompts = args.prompts.expanduser().resolve()
     args.sam_checkpoint = args.sam_checkpoint.expanduser().resolve()
     args.output = args.output.expanduser().resolve()
     args.runtime = args.runtime.expanduser().resolve()
 
-    if not image_files(args.images):
+    if args.images is not None and not image_files(args.images):
         parser.error("No input images found.")
-    if not args.prompts.is_file():
+    if args.prompts is not None and not args.prompts.is_file():
         parser.error(f"Prompts not found: {args.prompts}")
     if not args.sam_checkpoint.is_file():
         parser.error(f"SAM2 checkpoint not found: {args.sam_checkpoint}")
@@ -191,6 +301,9 @@ def main():
         parser.error("--consistency must be between 0 and 1.")
 
     out = args.output
+    if args.video:
+        args.images = out / "images"
+
     masks = out / "masks"
     colmap = out / "colmap"
     object_sfm = out / "object_sfm"
@@ -237,24 +350,64 @@ def main():
 
         rerun_downstream = True
 
+    if args.video:
+        stage(
+            "extract_frames",
+            lambda: frames_ok(args.images, args.video, args.fps),
+            [
+                python, SCRIPTS / "extract_video_frames.py",
+                "--video", args.video,
+                "--output", args.images,
+                "--fps", str(args.fps),
+            ],
+            destructive=args.images.exists(),
+        )
+
     stage(
         "sam2",
         lambda: masks_ok(masks, image_files(args.images)),
         [
-            python, SCRIPTS / "generate_masks_sam2.py",
+            python,
+            SCRIPTS / (
+                "generate_masks_sam2_video.py"
+                if args.video else "generate_masks_sam2.py"
+            ),
             "--images", args.images,
             "--output", masks,
-            "--prompts", args.prompts,
+            *(
+                ["--point", *map(str, args.point)]
+                if args.video else ["--prompts", args.prompts]
+            ),
             "--checkpoint", args.sam_checkpoint,
             "--device", args.device,
-            *(["--overwrite"] if args.force else []),
+            *(
+                [] if args.video else
+                (["--overwrite"] if args.force else [])
+            ),
         ],
-        destructive=masks.exists(),
+        destructive=(
+            masks.exists() and any(masks.iterdir())
+        ),
     )
+
+    # Reject an existing low-quality reconstruction without rerunning
+    # COLMAP or modifying any reconstruction files.
+    if model_ok(colmap / "sparse/0"):
+        total_images = len(image_files(args.images))
+        registered = registered_image_count(colmap / "sparse/0")
+        ratio = registered / total_images if total_images else 0.0
+
+        if registered < 10 or ratio < 0.70:
+            raise RuntimeError(
+                f"COLMAP reconstruction quality too low: "
+                f"{registered}/{total_images} registered ({ratio:.1%}). "
+                "Required: at least 10 images and 70%. "
+                "Use a fresh --output directory to retry COLMAP."
+            )
 
     stage(
         "colmap",
-        lambda: colmap_ok(colmap),
+        lambda: colmap_ok(colmap, len(image_files(args.images))),
         [
             python, SCRIPTS / "run_colmap.py",
             "--images", args.images,
