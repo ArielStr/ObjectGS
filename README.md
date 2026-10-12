@@ -46,8 +46,9 @@ masks propagated using SAM2 Video Tracking.
 <td align="center"><b>ObjectGS — 7K</b></td>
 </tr>
 <tr>
-<td width="50%"><img src="assets/object_03/vanilla_cap_7k.gif" width="100%"></td>
-<td width="50%"><img src="assets/object_03/objectgs_cap_7k.gif" width="100%"></td>
+<td colspan="2" align="center">
+<img src="assets/object_03/cap_comparison_7k.gif" width="100%">
+</td>
 </tr>
 <tr>
 <td align="center">175,251 Gaussians</td>
