@@ -59,20 +59,44 @@ masks propagated using SAM2 Video Tracking.
 
 **Result:** 7.2× fewer Gaussians (86.1% reduction).
 
+### Book — Video Input (55 Frames)
+
+55 frames reconstructed using COLMAP, with object masks generated
+using SAM2. Both models trained for 7,000 iterations at quarter resolution.
+
+<table>
+<tr>
+<td align="center"><b>Vanilla 3DGS — 7K</b></td>
+<td align="center"><b>ObjectGS — 7K</b></td>
+</tr>
+<tr>
+<td colspan="2" align="center">
+<img src="assets/object_04/book_comparison_7k.gif" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center">223,867 Gaussians</td>
+<td align="center">51,679 Gaussians</td>
+</tr>
+</table>
+
+**Result:** 4.3× fewer Gaussians (76.9% reduction).
+ObjectGS trained in 105.6 s versus 250.8 s for Vanilla.
+
 ### Quantitative Summary
 
-| Metric | Iron Man Vanilla | Iron Man ObjectGS | Cap Vanilla | Cap ObjectGS |
-|---|---:|---:|---:|---:|
-| Iterations | 7,000 | 7,000 | 7,000 | 7,000 |
-| Gaussians | 399,965 | 6,295 | 175,251 | 24,312 |
-| PLY size | — | — | 41.45 MB | 5.75 MB |
-| Training time | Not measured | Not measured | Not measured | 285.18 s |
+| Metric | Iron Man Vanilla | Iron Man ObjectGS | Cap Vanilla | Cap ObjectGS | Book Vanilla | Book ObjectGS |
+|---|---:|---:|---:|---:|---:|---:|
+| Iterations | 7,000 | 7,000 | 7,000 | 7,000 | 7,000 | 7,000 |
+| Gaussians | 399,965 | 6,295 | 175,251 | 24,312 | 223,867 | 51,679 |
+| PLY size | — | — | 41.45 MB | 5.75 MB | 52.95 MB | 12.22 MB |
+| Training time | Not measured | Not measured | Not measured | 285.18 s | 250.8 s | 105.6 s |
 
 The cap baseline used `--eval`, whereas ObjectGS trained on all
 registered frames. The training splits therefore differ, so this
 is a qualitative comparison rather than a controlled benchmark.
 
-Results are preliminary and cover two captured objects.
+Results are preliminary and cover three captured objects.
 
 ## Quick Start
 
