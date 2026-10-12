@@ -147,9 +147,31 @@ def registered_image_count(model_dir):
     return 0
 
 
+
+def selected_colmap_model(folder):
+    """Resolve the reconstruction selected by run_colmap.py."""
+    marker = folder / "selected_model.txt"
+
+    if not marker.is_file():
+        return None
+
+    relative = Path(marker.read_text(encoding="utf-8").strip())
+
+    if relative.is_absolute() or ".." in relative.parts:
+        return None
+
+    model = folder / relative
+
+    if not model.is_dir() or not model_ok(model):
+        return None
+
+    return model
+
 def colmap_ok(folder, total_images, min_ratio=0.70, min_images=10):
     """Validate reconstruction files and registered camera coverage."""
-    original = folder / "sparse/0"
+    original = selected_colmap_model(folder)
+    if original is None:
+        return False
     undistorted = folder / "undistorted/sparse"
 
     if not (
@@ -392,9 +414,10 @@ def main():
 
     # Reject an existing low-quality reconstruction without rerunning
     # COLMAP or modifying any reconstruction files.
-    if model_ok(colmap / "sparse/0"):
+    existing_model = selected_colmap_model(colmap)
+    if existing_model is not None:
         total_images = len(image_files(args.images))
-        registered = registered_image_count(colmap / "sparse/0")
+        registered = registered_image_count(existing_model)
         ratio = registered / total_images if total_images else 0.0
 
         if registered < 10 or ratio < 0.70:
@@ -420,12 +443,18 @@ def main():
         destructive=colmap.exists(),
     )
 
+    original_model = selected_colmap_model(colmap)
+    if original_model is None:
+        raise RuntimeError(
+            "Selected COLMAP reconstruction is missing or invalid."
+        )
+
     stage(
         "object_sfm",
         lambda: model_ok(object_sfm),
         [
             python, SCRIPTS / "prepare_object_sfm.py",
-            "--original-model", colmap / "sparse/0",
+            "--original-model", original_model,
             "--undistorted-model", colmap / "undistorted/sparse",
             "--masks", masks,
             "--output", object_sfm,
@@ -439,7 +468,7 @@ def main():
         lambda: scene_ok(scene),
         [
             python, SCRIPTS / "prepare_scene.py",
-            "--original-model", colmap / "sparse/0",
+            "--original-model", original_model,
             "--undistorted-images", colmap / "undistorted/images",
             "--object-model", object_sfm,
             "--masks", masks,

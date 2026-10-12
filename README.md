@@ -76,38 +76,52 @@ Results are preliminary and cover two captured objects.
 
 ## Quick Start
 
-Install ObjectGS:
+ObjectGS supports two workflows: video input and multi-view images.
+Both run segmentation, COLMAP, object-only SfM, and ObjectGS training.
+
+### Installation
 
     git clone https://github.com/ArielStr/ObjectGS.git
     cd ObjectGS
     bash setup.sh --mode gpu --install-colmap --install-sam2
 
-Prepare multi-view RGB images and a JSON file containing
-SAM2 box prompts for each image.
+A CUDA GPU is required for training.
+The SAM2 checkpoint is downloaded to `checkpoints/sam2.1_hiera_small.pt`.
 
-Download the matching SAM2 checkpoint separately.
+### Run from Video
 
-Run the complete pipeline:
+    python scripts/run_pipeline.py --video data/my_object/video.mp4 --point 1150 1320 --fps 3 --sam-checkpoint checkpoints/sam2.1_hiera_small.pt --output outputs/my_video --iterations 7000 --sift-gpu off
 
-    python scripts/run_pipeline.py --images data/my_object/images --prompts data/my_object/prompts.json --sam-checkpoint checkpoints/sam2.1_hiera_small.pt --output outputs/my_object --iterations 7000 --sift-gpu off
+The `--point X Y` coordinates must be inside the target object
+in the first extracted frame, at its original resolution.
+SAM2 Video Tracking propagates the mask through subsequent frames.
 
-The pipeline performs SAM2 segmentation, COLMAP reconstruction,
-object-only SfM filtering, scene preparation, and ObjectGS training.
+### Run from Images
 
-Final model:
+    python scripts/run_pipeline.py --images data/my_object/images --prompts data/my_object/prompts.json --sam-checkpoint checkpoints/sam2.1_hiera_small.pt --output outputs/my_images --iterations 7000 --sift-gpu off
 
-    outputs/my_object/objectgs_7000/point_cloud/iteration_7000/point_cloud.ply
+Provide per-image SAM2 box or point prompts in JSON format.
+See [Generate masks with SAM2](#generate-masks-with-sam2).
+
+### Outputs
+
+The final model is saved under:
+
+    outputs/my_video/objectgs_7000/point_cloud/iteration_7000/point_cloud.ply
+
+The output directory also contains masks, COLMAP reconstruction,
+object-only SfM, prepared scene data, logs, and pipeline summary.
+Open the final PLY in [SuperSplat](https://superspl.at/editor).
 
 ### Resume
 
-Existing stages are skipped when their outputs pass basic validation.
+Existing stages are skipped when their outputs pass validation.
 Use a fresh output directory when changing inputs or parameters.
-The MVP does not track input or configuration changes automatically.
-The --force option requires a new or empty output directory.
+The pipeline does not automatically detect configuration changes.
+Use `--force` only with a new or empty output directory.
 
-In headless Colab environments, --sift-gpu off avoids COLMAP
-OpenGL context issues. ObjectGS training still uses CUDA.
-
+On headless Colab, `--sift-gpu off` avoids COLMAP OpenGL issues.
+ObjectGS training still uses CUDA.
 
 ## Motivation
 
@@ -161,46 +175,48 @@ The correction can be disabled for ablation experiments.
 
 ## Pipeline
 
-The repository provides wrappers for the main reconstruction stages:
+ObjectGS supports two input modes that share the same reconstruction
+and training stages.
 
-    Multi-view RGB images
-              |
-              +---- segmentation ----> object masks
-              |
-              v
-            COLMAP
-              |
-              v
-       full sparse SfM
-              |
-              v
-    multi-view mask consistency
-              |
-              v
-      object-only SfM
-              |
-              v
-       scene preparation
-        /            \
-       /              \
-undistorted RGB   undistorted masks
-                         |
-                    threshold > 127
-       \              /
-        \            /
-              |
-              v
-       ObjectGS scene
-              |
-              v
-       ObjectGS training
-              |
-              v
-    compact object Gaussian model
+    Multi-view images              Input video
+           |                           |
+           |                    Frame extraction
+           |                           |
+    SAM2 image segmentation     SAM2 video tracking
+           |                           |
+           +------------+--------------+
+                        |
+                 RGB images + masks
+                        |
+                  COLMAP SfM
+                        |
+             Select largest registered
+                reconstruction
+                        |
+                Image undistortion
+                        |
+             Multi-view mask consistency
+                        |
+                 Object-only SfM
+                        |
+                Scene preparation
+                        |
+                 ObjectGS training
+                        |
+             Object-centric 3D Gaussians
 
-Masks can be produced manually or by an external segmentation model.
-SAM 2 mask generation is supported through `scripts/generate_masks_sam2.py`.
+The COLMAP wrapper selects the reconstruction with the most registered
+images and records it in `selected_model.txt`. Downstream stages use
+that same reconstruction rather than assuming `sparse/0`.
 
+Object-only SfM retains 3D points based on the consistency of their
+multi-view observations with the segmentation masks.
+
+The prepared scene contains undistorted RGB images, aligned binary
+masks, camera parameters, and object-only SfM initialization.
+
+ObjectGS then trains using mask-guided photometric supervision,
+an outside-mask penalty, and mask-normalized densification.
 
 ## Object-only SfM initialization
 
@@ -316,6 +332,59 @@ python scripts/generate_masks_sam2.py \
 
 The generated masks are binary PNG files named by image stem. Validate
 them before continuing with the reconstruction pipeline.
+
+### Generate video masks with SAM2
+
+ObjectGS supports generating object masks from an ordered sequence
+of video frames using SAM2 Video Tracking.
+
+Unlike per-image SAM2 prompting, this workflow requires only one
+positive point in the first frame. SAM2 propagates the segmentation
+through the remaining frames.
+
+#### Example
+
+    python scripts/generate_masks_sam2_video.py \
+      --images /path/to/frames \
+      --output /path/to/masks \
+      --checkpoint checkpoints/sam2.1_hiera_small.pt \
+      --point 1080 1350 \
+      --device cuda \
+      --precision bf16
+
+The point coordinates are specified in the original first-frame
+image resolution.
+
+#### Requirements
+
+- Install SAM2 using `setup.sh --install-sam2`.
+- Input frames must be JPEG images with numeric frame ordering.
+  Examples: `frame_0000.jpg`, `frame_0001.jpg`.
+- Frames must represent a temporally ordered video sequence.
+- Use a CUDA GPU for BF16 inference.
+
+The script automatically creates temporary numeric filenames
+required by SAM2 without modifying the source images.
+
+#### Output
+
+For each input image, the script creates a binary grayscale PNG:
+
+- Object pixels: 255 (white)
+- Background pixels: 0 (black)
+- Resolution: identical to the source image
+- Filename: `<image_stem>.png`
+
+The generated masks are compatible with ObjectGS scene preparation
+and object-only SfM initialization.
+
+#### Validation
+
+    python scripts/validate_masks.py \
+      --images /path/to/frames \
+      --masks /path/to/masks
+
+Inspect the generated masks before training.
 
 ### Validate masks
 
@@ -442,27 +511,28 @@ upstream repository.
 
 ## Repository status
 
-Research prototype.
+ObjectGS is a research prototype for object-centric 3D Gaussian Splatting.
 
-Implemented:
+**Implemented:**
 
-- mask validation
-- COLMAP pipeline wrapper
-- multi-view object-SfM filtering
-- reproducible undistorted scene preparation
-- object-only photometric training loss
-- outside-mask RGB penalty
-- mask-normalized densification
-- ObjectGS training wrapper
-- pinned upstream 3DGS integration
+- End-to-end pipelines for multi-view images and video input
+- SAM2 image segmentation and video mask propagation
+- COLMAP reconstruction and largest-component selection
+- Multi-view mask-consistency filtering for object-only SfM
+- Reproducible undistorted scene preparation
+- Mask-guided photometric supervision and outside-mask penalty
+- Mask-normalized Gaussian densification
+- Patched upstream 3DGS training integration
+- Stage validation, resume support, and pipeline logging
+- Synchronized visual comparisons against Vanilla 3DGS
 
-Current work:
+**Current limitations and future work:**
 
-- evaluate end-to-end reconstruction on additional objects
-- perform controlled ablations
-- measure reconstruction quality vs. Gaussian count
-- add qualitative renders and comparison figures
-
+- Validate the updated pipeline on a new object from a clean runtime
+- Perform controlled Vanilla 3DGS versus ObjectGS comparisons
+- Measure reconstruction quality using image and silhouette metrics
+- Evaluate robustness across additional objects and capture conditions
+- Extend automated testing and reproducibility checks
 
 ## Acknowledgements
 
@@ -479,56 +549,3 @@ redistributing or using the software.
 When `setup.sh` is run with `--install-sam2`, it automatically downloads the official SAM2.1 Hiera Small checkpoint to `checkpoints/sam2.1_hiera_small.pt`.
 
 The checkpoint is reused on subsequent setup runs and is excluded from Git. Pass its path to the pipeline using `--sam-checkpoint`.
-
-## SAM2 Video Mask Generation
-
-ObjectGS supports generating object masks from an ordered sequence
-of video frames using SAM2 Video Tracking.
-
-Unlike per-image SAM2 prompting, this workflow requires only one
-positive point in the first frame. SAM2 propagates the segmentation
-through the remaining frames.
-
-### Example
-
-    python scripts/generate_masks_sam2_video.py \
-      --images /path/to/frames \
-      --output /path/to/masks \
-      --checkpoint checkpoints/sam2.1_hiera_small.pt \
-      --point 1080 1350 \
-      --device cuda \
-      --precision bf16
-
-The point coordinates are specified in the original first-frame
-image resolution.
-
-### Requirements
-
-- Install SAM2 using `setup.sh --install-sam2`.
-- Input frames must be JPEG images with numeric frame ordering.
-  Examples: `frame_0000.jpg`, `frame_0001.jpg`.
-- Frames must represent a temporally ordered video sequence.
-- Use a CUDA GPU for BF16 inference.
-
-The script automatically creates temporary numeric filenames
-required by SAM2 without modifying the source images.
-
-### Output
-
-For each input image, the script creates a binary grayscale PNG:
-
-- Object pixels: 255 (white)
-- Background pixels: 0 (black)
-- Resolution: identical to the source image
-- Filename: `<image_stem>.png`
-
-The generated masks are compatible with ObjectGS scene preparation
-and object-only SfM initialization.
-
-### Validation
-
-    python scripts/validate_masks.py \
-      --images /path/to/frames \
-      --masks /path/to/masks
-
-Inspect the generated masks before training.

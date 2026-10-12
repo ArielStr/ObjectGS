@@ -334,6 +334,14 @@ def main():
 
     undistorted_model = undistorted / "sparse"
 
+    # Persist the selected reconstruction for downstream stages.
+    selected_file = workspace / "selected_model.txt"
+    selected_file.write_text(
+        str(model.relative_to(workspace)) + "\n",
+        encoding="utf-8",
+    )
+    print(f"Selected model recorded: {selected_file}")
+
     print("\n===== DONE =====")
     print(f"Original sparse model    : {model}")
     print(f"Undistorted sparse model : {undistorted_model}")
