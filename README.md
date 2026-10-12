@@ -11,6 +11,67 @@ implementation and modifies both the training objective and
 densification behavior for small foreground objects.
 
 
+## Visual Results
+
+ObjectGS reconstructs the target object rather than the entire scene.
+The following comparisons use matching camera trajectories.
+
+### Example 1 — Iron Man (Object 02)
+
+<table>
+<tr>
+<td align="center"><b>Vanilla 3DGS — 7K</b></td>
+<td align="center"><b>ObjectGS — 7K</b></td>
+</tr>
+<tr>
+<td width="50%"><img src="assets/object_02/full_3dgs_orbit.gif" width="100%"></td>
+<td width="50%"><img src="assets/object_02/objectgs_orbit.gif" width="100%"></td>
+</tr>
+<tr>
+<td align="center">399,965 Gaussians</td>
+<td align="center">6,295 Gaussians</td>
+</tr>
+</table>
+
+**Result:** 63.5× fewer Gaussians (98.4% reduction).
+
+### Example 2 — Cap (Object 03, Video Input)
+
+54 frames extracted from a video at 3 FPS, with segmentation
+masks propagated using SAM2 Video Tracking.
+
+<table>
+<tr>
+<td align="center"><b>Vanilla 3DGS — 7K</b></td>
+<td align="center"><b>ObjectGS — 7K</b></td>
+</tr>
+<tr>
+<td width="50%"><img src="assets/object_03/vanilla_cap_7k.gif" width="100%"></td>
+<td width="50%"><img src="assets/object_03/objectgs_cap_7k.gif" width="100%"></td>
+</tr>
+<tr>
+<td align="center">175,251 Gaussians</td>
+<td align="center">24,312 Gaussians</td>
+</tr>
+</table>
+
+**Result:** 7.2× fewer Gaussians (86.1% reduction).
+
+### Quantitative Summary
+
+| Metric | Iron Man Vanilla | Iron Man ObjectGS | Cap Vanilla | Cap ObjectGS |
+|---|---:|---:|---:|---:|
+| Iterations | 7,000 | 7,000 | 7,000 | 7,000 |
+| Gaussians | 399,965 | 6,295 | 175,251 | 24,312 |
+| PLY size | — | — | 41.45 MB | 5.75 MB |
+| Training time | Not measured | Not measured | Not measured | 285.18 s |
+
+The cap baseline used `--eval`, whereas ObjectGS trained on all
+registered frames. The training splits therefore differ, so this
+is a qualitative comparison rather than a controlled benchmark.
+
+Results are preliminary and cover two captured objects.
+
 ## Quick Start
 
 Install ObjectGS:
@@ -95,45 +156,6 @@ the original 3DGS heuristic.
 
 The correction can be disabled for ablation experiments.
 
-
-## Visual comparison
-
-We compare ObjectGS with the standard 3D Gaussian Splatting pipeline
-on the same multi-view capture.
-
-Both visualizations below use the same camera trajectory.
-
-<table>
-<tr>
-<td align="center"><b>Standard 3DGS</b></td>
-<td align="center"><b>ObjectGS</b></td>
-</tr>
-<tr>
-<td><img src="assets/object_02/full_3dgs_orbit.gif" width="100%"></td>
-<td><img src="assets/object_02/objectgs_orbit.gif" width="100%"></td>
-</tr>
-<tr>
-<td align="center">399,965 Gaussians</td>
-<td align="center">6,295 Gaussians</td>
-</tr>
-</table>
-
-## Result
-
-On this capture, the standard full-scene 3DGS reconstruction contains
-**399,965 Gaussians**, while ObjectGS represents the target object with
-**6,295 Gaussians**.
-
-| Method | Gaussians |
-|---|---:|
-| Standard 3DGS | 399,965 |
-| ObjectGS | 6,295 |
-
-This corresponds to approximately **63.5× fewer Gaussians** for the
-object-centric representation in this experiment.
-
-These results are preliminary and currently cover a single evaluation
-object. Evaluation on additional objects is in progress.
 
 ## Pipeline
 
