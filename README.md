@@ -14,9 +14,9 @@ densification behavior for small foreground objects.
 ## Visual Results
 
 ObjectGS reconstructs the target object rather than the entire scene.
-The following comparisons use matching camera trajectories.
+Each comparison uses a synchronized side-by-side animation.
 
-### Example 1 — Iron Man (Object 02)
+### Iron Man — Multi-view Images
 
 <table>
 <tr>
@@ -24,8 +24,9 @@ The following comparisons use matching camera trajectories.
 <td align="center"><b>ObjectGS — 7K</b></td>
 </tr>
 <tr>
-<td width="50%"><img src="assets/object_02/full_3dgs_orbit.gif" width="100%"></td>
-<td width="50%"><img src="assets/object_02/objectgs_orbit.gif" width="100%"></td>
+<td colspan="2" align="center">
+<img src="assets/object_02/ironman_comparison_7k.gif" width="100%">
+</td>
 </tr>
 <tr>
 <td align="center">399,965 Gaussians</td>
@@ -35,7 +36,7 @@ The following comparisons use matching camera trajectories.
 
 **Result:** 63.5× fewer Gaussians (98.4% reduction).
 
-### Example 2 — Cap (Object 03, Video Input)
+### Cap — Video Input (54 Frames)
 
 54 frames extracted from a video at 3 FPS, with segmentation
 masks propagated using SAM2 Video Tracking.
