@@ -11,6 +11,93 @@ implementation and modifies both the training objective and
 densification behavior for small foreground objects.
 
 
+## Visual Results
+
+ObjectGS reconstructs the target object rather than the entire scene.
+Each comparison uses a synchronized side-by-side animation.
+
+### Iron Man — Multi-view Images
+
+<table>
+<tr>
+<td align="center"><b>Vanilla 3DGS — 7K</b></td>
+<td align="center"><b>ObjectGS — 7K</b></td>
+</tr>
+<tr>
+<td colspan="2" align="center">
+<img src="assets/object_02/ironman_comparison_7k.gif" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center">399,965 Gaussians</td>
+<td align="center">6,295 Gaussians</td>
+</tr>
+</table>
+
+**Result:** 63.5× fewer Gaussians (98.4% reduction).
+
+### Cap — Video Input (54 Frames)
+
+54 frames extracted from a video at 3 FPS, with segmentation
+masks propagated using SAM2 Video Tracking.
+
+<table>
+<tr>
+<td align="center"><b>Vanilla 3DGS — 7K</b></td>
+<td align="center"><b>ObjectGS — 7K</b></td>
+</tr>
+<tr>
+<td colspan="2" align="center">
+<img src="assets/object_03/cap_comparison_7k.gif" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center">175,251 Gaussians</td>
+<td align="center">24,312 Gaussians</td>
+</tr>
+</table>
+
+**Result:** 7.2× fewer Gaussians (86.1% reduction).
+
+### Book — Video Input (55 Frames)
+
+55 frames reconstructed using COLMAP, with object masks generated
+using SAM2. Both models trained for 7,000 iterations at quarter resolution.
+
+<table>
+<tr>
+<td align="center"><b>Vanilla 3DGS — 7K</b></td>
+<td align="center"><b>ObjectGS — 7K</b></td>
+</tr>
+<tr>
+<td colspan="2" align="center">
+<img src="assets/object_04/book_comparison_7k.gif" width="100%">
+</td>
+</tr>
+<tr>
+<td align="center">223,867 Gaussians</td>
+<td align="center">51,679 Gaussians</td>
+</tr>
+</table>
+
+**Result:** 4.3× fewer Gaussians (76.9% reduction).
+ObjectGS trained in 105.6 s versus 250.8 s for Vanilla.
+
+### Quantitative Summary
+
+| Metric | Iron Man Vanilla | Iron Man ObjectGS | Cap Vanilla | Cap ObjectGS | Book Vanilla | Book ObjectGS |
+|---|---:|---:|---:|---:|---:|---:|
+| Iterations | 7,000 | 7,000 | 7,000 | 7,000 | 7,000 | 7,000 |
+| Gaussians | 399,965 | 6,295 | 175,251 | 24,312 | 223,867 | 51,679 |
+| PLY size | — | — | 41.45 MB | 5.75 MB | 52.95 MB | 12.22 MB |
+| Training time | Not measured | Not measured | Not measured | 285.18 s | 250.8 s | 105.6 s |
+
+The cap baseline used `--eval`, whereas ObjectGS trained on all
+registered frames. The training splits therefore differ, so this
+is a qualitative comparison rather than a controlled benchmark.
+
+Results are preliminary and cover three captured objects.
+
 ## What Makes ObjectGS Different?
 
 ObjectGS is not simply Vanilla 3D Gaussian Splatting applied to
@@ -56,8 +143,7 @@ Gaussians from rendering outside the object silhouette.
 ObjectGS adds an outside-mask penalty:
 
 $$
-L = L_{\mathrm{object}}
-+ \lambda_{\mathrm{outside}} L_{\mathrm{outside}}
+L = L_{\mathrm{object}} + \lambda_{\mathrm{outside}} L_{\mathrm{outside}}
 $$
 
 The outside-mask term is computed from the rendered RGB image:
@@ -145,93 +231,6 @@ These results are preliminary and should not be interpreted as a
 controlled reconstruction-quality benchmark.
 
 ---
-
-## Visual Results
-
-ObjectGS reconstructs the target object rather than the entire scene.
-Each comparison uses a synchronized side-by-side animation.
-
-### Iron Man — Multi-view Images
-
-<table>
-<tr>
-<td align="center"><b>Vanilla 3DGS — 7K</b></td>
-<td align="center"><b>ObjectGS — 7K</b></td>
-</tr>
-<tr>
-<td colspan="2" align="center">
-<img src="assets/object_02/ironman_comparison_7k.gif" width="100%">
-</td>
-</tr>
-<tr>
-<td align="center">399,965 Gaussians</td>
-<td align="center">6,295 Gaussians</td>
-</tr>
-</table>
-
-**Result:** 63.5× fewer Gaussians (98.4% reduction).
-
-### Cap — Video Input (54 Frames)
-
-54 frames extracted from a video at 3 FPS, with segmentation
-masks propagated using SAM2 Video Tracking.
-
-<table>
-<tr>
-<td align="center"><b>Vanilla 3DGS — 7K</b></td>
-<td align="center"><b>ObjectGS — 7K</b></td>
-</tr>
-<tr>
-<td colspan="2" align="center">
-<img src="assets/object_03/cap_comparison_7k.gif" width="100%">
-</td>
-</tr>
-<tr>
-<td align="center">175,251 Gaussians</td>
-<td align="center">24,312 Gaussians</td>
-</tr>
-</table>
-
-**Result:** 7.2× fewer Gaussians (86.1% reduction).
-
-### Book — Video Input (55 Frames)
-
-55 frames reconstructed using COLMAP, with object masks generated
-using SAM2. Both models trained for 7,000 iterations at quarter resolution.
-
-<table>
-<tr>
-<td align="center"><b>Vanilla 3DGS — 7K</b></td>
-<td align="center"><b>ObjectGS — 7K</b></td>
-</tr>
-<tr>
-<td colspan="2" align="center">
-<img src="assets/object_04/book_comparison_7k.gif" width="100%">
-</td>
-</tr>
-<tr>
-<td align="center">223,867 Gaussians</td>
-<td align="center">51,679 Gaussians</td>
-</tr>
-</table>
-
-**Result:** 4.3× fewer Gaussians (76.9% reduction).
-ObjectGS trained in 105.6 s versus 250.8 s for Vanilla.
-
-### Quantitative Summary
-
-| Metric | Iron Man Vanilla | Iron Man ObjectGS | Cap Vanilla | Cap ObjectGS | Book Vanilla | Book ObjectGS |
-|---|---:|---:|---:|---:|---:|---:|
-| Iterations | 7,000 | 7,000 | 7,000 | 7,000 | 7,000 | 7,000 |
-| Gaussians | 399,965 | 6,295 | 175,251 | 24,312 | 223,867 | 51,679 |
-| PLY size | — | — | 41.45 MB | 5.75 MB | 52.95 MB | 12.22 MB |
-| Training time | Not measured | Not measured | Not measured | 285.18 s | 250.8 s | 105.6 s |
-
-The cap baseline used `--eval`, whereas ObjectGS trained on all
-registered frames. The training splits therefore differ, so this
-is a qualitative comparison rather than a controlled benchmark.
-
-Results are preliminary and cover three captured objects.
 
 ## Google Colab — Recommended
 
