@@ -11,6 +11,141 @@ implementation and modifies both the training objective and
 densification behavior for small foreground objects.
 
 
+## What Makes ObjectGS Different?
+
+ObjectGS is not simply Vanilla 3D Gaussian Splatting applied to
+segmented images. It modifies the optimization objective, Gaussian
+densification behavior, and sparse initialization to focus the
+reconstruction on a selected foreground object.
+
+### Vanilla 3DGS vs. ObjectGS
+
+| Component | Vanilla 3DGS | ObjectGS |
+|---|---|---|
+| Reconstruction target | Full scene | Selected foreground object |
+| Photometric supervision | Full-image loss | Foreground-normalized masked loss |
+| Background handling | Background is reconstructed | Outside-mask penalty suppresses unwanted rendering |
+| Densification | Original screen-space gradients | Mask-fraction-normalized densification gradients |
+| Sparse initialization | COLMAP scene points | Mask-consistent object-only SfM points |
+| Representation | Scene-level Gaussians | Compact object-centric Gaussians |
+
+### 1. Object-Focused Photometric Loss
+
+Standard 3DGS optimizes image reconstruction across the entire view.
+ObjectGS instead concentrates reconstruction error on the selected
+object, using a binary foreground mask.
+
+For a rendered image $\hat{I}$, target image $I$, and binary mask $M$,
+the foreground-normalized pixelwise reconstruction term is:
+
+$$
+L_{\mathrm{object}} =
+\frac{\sum_p M_p \, \ell(I_p,\hat{I}_p)}
+{\sum_p M_p}
+$$
+
+Here, $\ell$ denotes the pixelwise photometric error. The foreground
+normalization prevents a small object from being overwhelmed by the
+much larger background area.
+
+### 2. Outside-Mask Penalty
+
+A foreground-only reconstruction loss does not by itself discourage
+Gaussians from rendering outside the object silhouette.
+
+ObjectGS adds an outside-mask penalty:
+
+$$
+L = L_{\mathrm{object}}
++ \lambda_{\mathrm{outside}} L_{\mathrm{outside}}
+$$
+
+The outside-mask term is computed from the rendered RGB image:
+
+$$
+L_{\mathrm{outside}} =
+\frac{
+\sum_{p,c}(1-M_p)\,|\hat{I}_{p,c}|
+}{
+C\sum_p(1-M_p)+\epsilon
+}
+$$
+
+where $C$ is the number of image channels (3 for RGB) and
+$\epsilon$ provides numerical stability.
+
+The default configuration uses $\lambda_{\mathrm{outside}} = 1.0$.
+
+Unlike an opacity penalty, this term penalizes nonzero rendered RGB
+values outside the object mask. It encourages a dark background
+outside the target silhouette, but does not directly guarantee
+zero Gaussian opacity there.
+
+### 3. Mask-Normalized Densification
+
+**This is a key algorithmic modification.**
+
+Foreground-normalized loss changes the scale of the gradients used
+during optimization. For objects occupying only a small fraction of
+the image, the original 3DGS densification heuristic can receive
+disproportionately large screen-space gradient signals.
+
+In our experiments, masked training without this correction caused
+severe over-densification.
+
+ObjectGS rescales the densification gradient signal by the fraction
+of foreground pixels in the training view:
+
+$$
+f_{\mathrm{mask}} = \frac{\sum_p M_p}{H W}
+$$
+
+$$
+g_{\mathrm{densification}}^{\mathrm{ObjectGS}}
+= f_{\mathrm{mask}} \cdot g_{\mathrm{densification}}
+$$
+
+This correction rescales the accumulated screen-space gradient
+statistics used for Gaussian clone/split decisions. It does not
+rescale the gradients used by the optimizer or replace the
+object-focused reconstruction objective.
+
+The ObjectGS training wrapper enables mask-normalized densification
+by default, even though the patched upstream runtime exposes it
+as an optional flag.
+
+It preserves foreground-focused optimization while bringing the
+densification statistics closer to the scale expected by the
+original 3DGS heuristic.
+
+### 4. Object-Only Sparse Initialization
+
+ObjectGS also filters the COLMAP sparse reconstruction using
+multi-view mask consistency.
+
+A 3D point is retained when its observations agree with the
+foreground masks across the registered views. By default, the
+consistency threshold is 1.0, requiring every observation of a
+retained point to lie inside the object mask.
+
+This gives training an object-focused sparse initialization rather
+than starting from all scene points.
+
+### Why It Matters
+
+The combination of foreground-focused supervision, outside-mask
+regularization, object-only initialization, and corrected
+densification produces a substantially more compact representation
+in our experiments.
+
+The visual comparisons below show reductions of 76.9% to 98.4% in
+Gaussian count relative to the corresponding Vanilla 3DGS runs.
+
+These results are preliminary and should not be interpreted as a
+controlled reconstruction-quality benchmark.
+
+---
+
 ## Visual Results
 
 ObjectGS reconstructs the target object rather than the entire scene.
@@ -113,6 +248,65 @@ The easiest way to run ObjectGS is through the end-to-end Google Colab notebook.
 
 For better results, keep the object visible and in focus, move around it
 slowly, capture overlapping viewpoints, and avoid strong motion blur.
+
+### Video Capture Guidelines
+
+For the video workflow, we recommend starting with a short,
+continuous recording that makes approximately **one full orbit
+(360 degrees) around a mostly stationary object**.
+
+A practical starting configuration is:
+
+| Parameter | Suggested starting point |
+|---|---|
+| Video duration | Approximately 15 seconds |
+| Camera movement | One slow, continuous orbit around the object |
+| Frame extraction | `FPS = 2.0` |
+| Approximate extracted frames | 30 frames |
+| Quick pipeline test | `ITERATIONS = 1000` |
+| Longer reconstruction experiment | `ITERATIONS = 7000` |
+
+These are practical starting points, not strict requirements.
+The appropriate frame count depends on the object's texture,
+visibility, viewpoint overlap, and camera motion.
+
+**Capture recommendations:**
+
+- Keep the object mostly stationary while moving the camera around it.
+- Try to complete one full orbit, capturing multiple visible sides.
+- Move slowly and maintain overlap between consecutive viewpoints.
+- Keep the object sharp, well lit, and visible throughout the video.
+- Avoid motion blur, sudden camera movements, and large occlusions.
+- Prefer objects with visible texture and geometric detail.
+
+**Frame count versus processing cost:** Increasing `FPS` extracts
+more frames from the same video. This can improve viewpoint coverage,
+but it also increases SAM2 tracking work, COLMAP feature extraction
+and matching, reconstruction overhead, and the number of training
+views. More frames do not automatically mean better reconstruction.
+
+For example, a 15-second video sampled at 2 FPS yields approximately
+30 frames. This is a reasonable first experiment, not a guarantee
+that COLMAP will register every frame.
+
+### Training Iterations and Reconstruction Quality
+
+The notebook defaults to `ITERATIONS = 1000` to make the initial
+end-to-end test relatively quick.
+
+For a more developed reconstruction, **we recommend trying
+`ITERATIONS = 7000`** after confirming that the pipeline and object
+selection work correctly.
+
+| Setting | Intended use |
+|---|---|
+| 1,000 iterations | Quick test, pipeline validation, early visual feedback |
+| 7,000 iterations | Longer optimization, generally more developed reconstruction |
+
+More iterations increase training time and do not guarantee
+improved quality in every case. Reconstruction quality also depends
+on camera coverage, mask accuracy, COLMAP registration, and the
+object's visual characteristics.
 
 ### Step-by-step execution
 
