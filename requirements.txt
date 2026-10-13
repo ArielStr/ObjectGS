@@ -4,3 +4,5 @@ Pillow
 pycolmap
 plyfile
 tqdm
+ipywidgets
+matplotlib

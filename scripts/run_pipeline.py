@@ -207,7 +207,7 @@ def training_ok(folder, iterations):
     return ply.is_file() and ply.stat().st_size > 0
 
 
-def run_stage(name, cmd, log_dir):
+def run_stage(name, cmd, log_dir, verbose=False):
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"{name}.log"
 
@@ -235,7 +235,7 @@ def run_stage(name, cmd, log_dir):
             log.write(line)
             log.flush()
             # Keep notebook output compact.
-            if any(s in line for s in (
+            if verbose or any(s in line for s in (
                 "===== DONE", "Training complete",
                 "Saving Gaussians", "Selected Points3D",
                 "Registered images", "Points3D",
@@ -296,6 +296,10 @@ def main():
         "--prepare-selection",
         action="store_true",
         help="Extract video frames, generate SAM2 candidates, then stop.",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="Stream complete stage logs in real time.",
     )
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
@@ -400,7 +404,7 @@ def main():
                 "Use a fresh --output directory or --force."
             )
 
-        timings[name] = run_stage(name, command, logs)
+        timings[name] = run_stage(name, command, logs, verbose=args.verbose)
 
         if not valid():
             raise RuntimeError(
@@ -449,6 +453,7 @@ def main():
                     "--max-candidates", "100",
                 ],
                 logs,
+                verbose=args.verbose,
             )
 
         print("\n===== SELECTION READY =====")
