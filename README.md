@@ -98,6 +98,119 @@ is a qualitative comparison rather than a controlled benchmark.
 
 Results are preliminary and cover three captured objects.
 
+## Google Colab — Recommended
+
+The easiest way to run ObjectGS is through the end-to-end Google Colab notebook.
+
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/ArielStr/ObjectGS/blob/main/notebooks/ObjectGS_End_to_End.ipynb)
+
+### Requirements
+
+- A Google account with access to Google Colab.
+- A Colab runtime with an NVIDIA GPU (Runtime > Change runtime type > GPU).
+- A video of a mostly stationary object filmed from multiple viewpoints.
+- Sufficient GPU runtime, disk space, and time for reconstruction and training.
+
+For better results, keep the object visible and in focus, move around it
+slowly, capture overlapping viewpoints, and avoid strong motion blur.
+
+### Step-by-step execution
+
+Open the notebook, enable a GPU, and execute the cells in order.
+
+**Step 1 — Setup (Cell 2)**
+
+Clone the public ObjectGS repository and install the dependencies,
+including COLMAP, SAM2, and the patched 3D Gaussian Splatting runtime.
+
+No GitHub token is required for cloning.
+
+Full setup logs are saved to `/content/ObjectGS/setup_full.log`.
+
+**Step 2 — Upload video (Cell 4)**
+
+The default input configuration is:
+
+    INPUT_SOURCE = "upload"
+    FPS = 1.0
+    ITERATIONS = 1000
+
+Running this cell opens a video upload dialog.
+
+`FPS` controls how many frames are extracted per second. Increasing
+it may improve viewpoint coverage, but increases computation.
+
+`ITERATIONS` controls the training duration. Start with 1,000 iterations
+for a quick experiment, then consider 7,000 for a longer run.
+
+The notebook also supports Drive input using `INPUT_SOURCE = "drive"`
+and a user-configured `DRIVE_VIDEO` path.
+
+**Step 3 — Generate object candidates (Cell 6)**
+
+Run the candidate generation cell and wait for it to finish.
+
+**Step 4 — Select the target object (Cell 8)**
+
+Use the interactive object selection interface to select the object
+you want to reconstruct. The default interface supports bounding-box
+selection. Verify the selected mask before continuing.
+
+You do not need to create masks manually for every frame.
+
+**Step 5 — Run ObjectGS (Cell 10)**
+
+Run the remaining end-to-end pipeline:
+
+1. Extract video frames.
+2. Track object masks using SAM2.
+3. Estimate camera poses and sparse geometry using COLMAP.
+4. Filter sparse points using multi-view mask consistency.
+5. Prepare the undistorted ObjectGS scene.
+6. Train the object-centric Gaussian Splatting model.
+
+The pipeline may stop if too few frames are registered or the
+reconstruction does not pass its quality checks.
+
+**Step 6 — Review results (Cells 11 and 13)**
+
+The experiment is saved under:
+
+    /content/objectgs_runs/<run_id>/
+
+For a completed 1,000-iteration run, the trained model is typically:
+
+    /content/objectgs_runs/<run_id>/objectgs_1000/point_cloud/iteration_1000/point_cloud.ply
+
+Open the PLY using [SuperSplat](https://superspl.at/editor).
+
+**Step 7 — Download results (Cell 15)**
+
+The default export configuration is:
+
+    EXPORT_MODE = "download"
+
+The cell creates a ZIP archive of the experiment and downloads it.
+
+Alternatively, set `EXPORT_MODE = "drive"` and configure your
+own `DRIVE_EXPORT_DIR`.
+
+### Troubleshooting
+
+| Problem | Suggested action |
+|---|---|
+| GPU unavailable | Enable a GPU runtime before setup |
+| Setup failure | Inspect `/content/ObjectGS/setup_full.log` |
+| Incorrect object selection | Rerun selection and inspect the mask |
+| Too few COLMAP-registered frames | Capture overlapping viewpoints or increase FPS |
+| GPU out of memory | Reduce the number of extracted frames or use a larger GPU |
+| Colab disconnects | Export results before the runtime is deleted |
+
+Colab runtime storage is temporary. Download or export results
+before disconnecting.
+
+---
+
 ## Quick Start
 
 ObjectGS supports two workflows: video input and multi-view images.
@@ -552,7 +665,7 @@ ObjectGS is a research prototype for object-centric 3D Gaussian Splatting.
 
 **Current limitations and future work:**
 
-- Validate the updated pipeline on a new object from a clean runtime
+- Expand clean-runtime validation across additional objects and capture conditions
 - Perform controlled Vanilla 3DGS versus ObjectGS comparisons
 - Measure reconstruction quality using image and silhouette metrics
 - Evaluate robustness across additional objects and capture conditions
