@@ -28,10 +28,15 @@ def main():
         "--config",
         default="configs/sam2.1/sam2.1_hiera_s.yaml",
     )
-    parser.add_argument(
-        "--point", nargs=2, type=float, required=True,
+    prompt_group = parser.add_mutually_exclusive_group(required=True)
+    prompt_group.add_argument(
+        "--point", nargs=2, type=float,
         metavar=("X", "Y"),
         help="Positive point in original first-frame pixel coordinates.",
+    )
+    prompt_group.add_argument(
+        "--initial-mask", type=Path,
+        help="Binary PNG mask aligned with the first video frame.",
     )
     parser.add_argument("--device", default="cuda")
     parser.add_argument(
@@ -69,13 +74,45 @@ def main():
     with Image.open(frames[0]) as image:
         width, height = image.size
 
-    x, y = args.point
-    if not (0 <= x < width and 0 <= y < height):
-        parser.error(f"Point outside first frame ({width}x{height}).")
+    initial_mask = None
+
+    if args.initial_mask is not None:
+        mask_path = args.initial_mask.expanduser().resolve()
+
+        if not mask_path.is_file():
+            parser.error(f"Initial mask not found: {mask_path}")
+
+        with Image.open(mask_path) as mask_image:
+            initial_mask = np.asarray(
+                mask_image.convert("L")
+            ).copy() > 0
+
+        if initial_mask.shape != (height, width):
+            parser.error(
+                f"Initial mask shape {initial_mask.shape} does not match "
+                f"first frame ({height}, {width})."
+            )
+
+        if not initial_mask.any():
+            parser.error("Initial mask is empty.")
+
+    else:
+        x, y = args.point
+
+        if not (0 <= x < width and 0 <= y < height):
+            parser.error(f"Point outside first frame ({width}x{height}).")
 
     print(f"Frames: {len(frames)}", flush=True)
     print(f"First frame: {frames[0].name}", flush=True)
-    print(f"Positive point: ({x}, {y})", flush=True)
+
+    if initial_mask is not None:
+        print(
+            f"Initial mask: {mask_path} "
+            f"(foreground={initial_mask.mean():.2%})",
+            flush=True,
+        )
+    else:
+        print(f"Positive point: ({x}, {y})", flush=True)
 
     predictor = build_sam2_video_predictor(
         args.config,
@@ -110,16 +147,24 @@ def main():
                 offload_state_to_cpu=True,
             )
 
-            points = np.array([[x, y]], dtype=np.float32)
-            labels = np.array([1], dtype=np.int32)
+            if initial_mask is not None:
+                predictor.add_new_mask(
+                    inference_state=state,
+                    frame_idx=0,
+                    obj_id=1,
+                    mask=initial_mask,
+                )
+            else:
+                points = np.array([[x, y]], dtype=np.float32)
+                labels = np.array([1], dtype=np.int32)
 
-            predictor.add_new_points_or_box(
-                inference_state=state,
-                frame_idx=0,
-                obj_id=1,
-                points=points,
-                labels=labels,
-            )
+                predictor.add_new_points_or_box(
+                    inference_state=state,
+                    frame_idx=0,
+                    obj_id=1,
+                    points=points,
+                    labels=labels,
+                )
 
             output_dir.mkdir(parents=True, exist_ok=True)
             completed = set()

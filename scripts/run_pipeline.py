@@ -263,7 +263,14 @@ def main():
     inputs = parser.add_mutually_exclusive_group(required=True)
     inputs.add_argument("--images", type=Path)
     inputs.add_argument("--video", type=Path)
-    parser.add_argument("--point", nargs=2, type=float, metavar=("X", "Y"))
+    video_prompts = parser.add_mutually_exclusive_group()
+    video_prompts.add_argument(
+        "--point", nargs=2, type=float, metavar=("X", "Y")
+    )
+    video_prompts.add_argument(
+        "--initial-mask", type=Path,
+        help="Binary mask for the first video frame.",
+    )
     parser.add_argument("--fps", type=float, default=3.0)
     parser.add_argument("--prompts", type=Path)
     parser.add_argument("--sam-checkpoint", type=Path, required=True)
@@ -285,6 +292,11 @@ def main():
         "--sift-gpu", choices=["auto", "on", "off"],
         default="auto",
     )
+    parser.add_argument(
+        "--prepare-selection",
+        action="store_true",
+        help="Extract video frames, generate SAM2 candidates, then stop.",
+    )
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
 
@@ -292,8 +304,14 @@ def main():
         args.video = args.video.expanduser().resolve()
         if not args.video.is_file():
             parser.error(f"Video not found: {args.video}")
-        if args.point is None:
-            parser.error("--point X Y is required with --video")
+        if (
+            not args.prepare_selection
+            and args.point is None
+            and args.initial_mask is None
+        ):
+            parser.error(
+                "--video requires --point X Y or --initial-mask PATH"
+            )
         if args.prompts is not None:
             parser.error("--prompts is only supported with --images")
         if args.fps <= 0:
@@ -302,9 +320,28 @@ def main():
         args.images = args.images.expanduser().resolve()
         if args.prompts is None:
             parser.error("--prompts is required with --images")
+        if args.point is not None or args.initial_mask is not None:
+            parser.error(
+                "--point and --initial-mask are only supported with --video"
+            )
+
+    if args.prepare_selection:
+        if args.video is None:
+            parser.error("--prepare-selection requires --video")
+        if args.point is not None or args.initial_mask is not None:
+            parser.error(
+                "--prepare-selection does not accept --point or --initial-mask"
+            )
 
     if args.prompts is not None:
         args.prompts = args.prompts.expanduser().resolve()
+    if args.initial_mask is not None:
+        args.initial_mask = args.initial_mask.expanduser().resolve()
+        if not args.initial_mask.is_file():
+            parser.error(
+                f"Initial mask not found: {args.initial_mask}"
+            )
+
     args.sam_checkpoint = args.sam_checkpoint.expanduser().resolve()
     args.output = args.output.expanduser().resolve()
     args.runtime = args.runtime.expanduser().resolve()
@@ -315,7 +352,7 @@ def main():
         parser.error(f"Prompts not found: {args.prompts}")
     if not args.sam_checkpoint.is_file():
         parser.error(f"SAM2 checkpoint not found: {args.sam_checkpoint}")
-    if not args.runtime.is_dir():
+    if not args.prepare_selection and not args.runtime.is_dir():
         parser.error(f"Runtime not found: {args.runtime}")
     if args.iterations <= 0:
         parser.error("--iterations must be positive.")
@@ -385,6 +422,41 @@ def main():
             destructive=args.images.exists(),
         )
 
+    if args.prepare_selection:
+        candidates_dir = out / "selection"
+        first_frame = sorted(
+            image_files(args.images),
+            key=lambda p: p.name,
+        )[0]
+
+        if not (candidates_dir / "candidates.json").is_file():
+            if candidates_dir.exists() and any(candidates_dir.iterdir()):
+                raise RuntimeError(
+                    "Selection directory is incomplete or already populated: "
+                    f"{candidates_dir}"
+                )
+
+            run_stage(
+                "prepare_selection",
+                [
+                    python,
+                    SCRIPTS / "select_object_sam2.py",
+                    "--image", first_frame,
+                    "--checkpoint", args.sam_checkpoint,
+                    "--output", candidates_dir,
+                    "--device", args.device,
+                    "--points-per-side", "32",
+                    "--max-candidates", "100",
+                ],
+                logs,
+            )
+
+        print("\n===== SELECTION READY =====")
+        print("First frame:", first_frame)
+        print("Candidates:", candidates_dir)
+        print("Open the Colab selector to choose the object.")
+        return
+
     stage(
         "sam2",
         lambda: masks_ok(masks, image_files(args.images)),
@@ -397,11 +469,18 @@ def main():
             "--images", args.images,
             "--output", masks,
             *(
-                ["--point", *map(str, args.point)]
+                (
+                    ["--initial-mask", args.initial_mask]
+                    if args.initial_mask is not None
+                    else ["--point", *map(str, args.point)]
+                )
                 if args.video else ["--prompts", args.prompts]
             ),
             "--checkpoint", args.sam_checkpoint,
             "--device", args.device,
+            *(
+                ["--precision", "fp32"] if args.video else []
+            ),
             *(
                 [] if args.video else
                 (["--overwrite"] if args.force else [])
