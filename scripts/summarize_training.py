@@ -51,6 +51,23 @@ def summarize(output):
         metrics["evaluation_l1"] = float(last_eval.group(2))
         metrics["evaluation_psnr"] = float(last_eval.group(3))
 
+    # Object-only evaluation metrics (available in newer training logs).
+    object_eval_pattern = re.compile(
+        r"\[OBJECT EVAL\]\s*"
+        r"iter=(\d+)\s+"
+        r"split=(train|test)\s+"
+        r"L1=([\d.eE+-]+)\s+"
+        r"PSNR=([\d.eE+-]+)\s+"
+        r"Views=(\d+)"
+    )
+
+    for match in object_eval_pattern.finditer(log):
+        split = match.group(2)
+        metrics[f"{split}_object_eval_iteration"] = int(match.group(1))
+        metrics[f"{split}_object_l1"] = float(match.group(3))
+        metrics[f"{split}_object_psnr"] = float(match.group(4))
+        metrics[f"{split}_object_views"] = int(match.group(5))
+
     # Match only the primary tqdm Loss, not Depth Loss
     progress_pattern = re.compile(
         r"(?<!Depth )\bLoss=([\d.eE+-]+)"

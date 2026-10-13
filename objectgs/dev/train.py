@@ -259,6 +259,9 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
             if config['cameras'] and len(config['cameras']) > 0:
                 l1_test = 0.0
                 psnr_test = 0.0
+                object_l1_total = 0.0
+                object_psnr_total = 0.0
+                object_view_count = 0
                 for idx, viewpoint in enumerate(config['cameras']):
                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
@@ -271,9 +274,50 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
                     l1_test += l1_loss(image, gt_image).mean().double()
                     psnr_test += psnr(image, gt_image).mean().double()
+
+                    # Object-only evaluation, normalized by foreground area.
+                    mask = viewpoint.alpha_mask.to(image.device).clamp(0.0, 1.0)
+                    if train_test_exp:
+                        mask = mask[..., mask.shape[-1] // 2:]
+
+                    mask_pixels = mask.sum()
+                    if mask_pixels.item() > 0:
+                        diff = image - gt_image
+                        channels = image.shape[0]
+                        denominator = mask_pixels * channels
+
+                        object_l1 = (diff.abs() * mask).sum() / denominator
+                        object_mse = (diff.square() * mask).sum() / denominator
+                        object_psnr = -10.0 * torch.log10(
+                            object_mse.clamp_min(1e-10)
+                        )
+
+                        object_l1_total += object_l1.double()
+                        object_psnr_total += object_psnr.double()
+                        object_view_count += 1
+
                 psnr_test /= len(config['cameras'])
-                l1_test /= len(config['cameras'])          
+                l1_test /= len(config['cameras'])
                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
+
+                if object_view_count:
+                    object_l1_mean = object_l1_total / object_view_count
+                    object_psnr_mean = object_psnr_total / object_view_count
+                    print(
+                        f"[OBJECT EVAL] iter={iteration} split={config['name']} "
+                        f"L1={object_l1_mean.item():.6f} "
+                        f"PSNR={object_psnr_mean.item():.4f} "
+                        f"Views={object_view_count}"
+                    )
+                    if tb_writer:
+                        tb_writer.add_scalar(
+                            config['name'] + '/object_l1',
+                            object_l1_mean, iteration
+                        )
+                        tb_writer.add_scalar(
+                            config['name'] + '/object_psnr',
+                            object_psnr_mean, iteration
+                        )
                 if tb_writer:
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
