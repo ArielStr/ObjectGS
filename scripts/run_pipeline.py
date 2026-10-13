@@ -231,17 +231,64 @@ def run_stage(name, cmd, log_dir, verbose=False):
                  "QT_QPA_PLATFORM": "offscreen"},
         )
 
-        for line in proc.stdout:
-            log.write(line)
-            log.flush()
-            # Keep notebook output compact.
-            if verbose or any(s in line for s in (
+        import re
+
+        progress_step = 0
+        buffer = ""
+
+        def handle_segment(segment):
+            nonlocal progress_step
+
+            if not segment.strip():
+                return
+
+            if name == "training" and not verbose:
+                match = re.search(
+                    r"Training progress:.*?(\d+)/(\d+)",
+                    segment,
+                )
+                if match:
+                    current = int(match.group(1))
+                    total = int(match.group(2))
+
+                    if total > 0:
+                        bucket = min(10, current * 10 // total)
+                        if bucket > progress_step:
+                            progress_step = bucket
+                            print(
+                                f"[TRAIN] {bucket * 10}% | "
+                                f"iteration {current}/{total}",
+                                flush=True,
+                            )
+
+            if verbose or any(s in segment for s in (
                 "===== DONE", "Training complete",
                 "Saving Gaussians", "Selected Points3D",
                 "Registered images", "Points3D",
+                "[OBJECT EVAL]", "Evaluating train:",
+                "Evaluating test:",
                 "Traceback", "Error", "ERROR",
             )):
-                print(line.rstrip(), flush=True)
+                print(segment.rstrip(), flush=True)
+
+        # Read immediately on CR or LF, not only on newline.
+        while True:
+            char = proc.stdout.read(1)
+            if not char:
+                break
+
+            log.write(char)
+
+            if char in ("\r", "\n"):
+                handle_segment(buffer)
+                buffer = ""
+            else:
+                buffer += char
+
+        if buffer:
+            handle_segment(buffer)
+
+        log.flush()
 
         code = proc.wait()
 

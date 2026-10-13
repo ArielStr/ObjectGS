@@ -154,6 +154,8 @@ def main():
         "--lambda_outside", str(args.lambda_outside),
         "--save_iterations",
         *[str(x) for x in save_iterations],
+        "--test_iterations",
+        str(args.iterations),
     ]
 
     if not args.no_mask_normalized_densification:
