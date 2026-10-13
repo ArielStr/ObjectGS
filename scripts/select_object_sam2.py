@@ -164,6 +164,46 @@ def refine_selected_mask(image, original_mask, checkpoint, config, device):
     return selected, selected_id, results
 
 
+
+def generate_box_candidates(image, checkpoint, config, device, box):
+    """Generate SAM2 mask candidates from a user-defined bounding box."""
+    from sam2.sam2_image_predictor import SAM2ImagePredictor
+
+    image = np.asarray(image)
+    height, width = image.shape[:2]
+
+    box = np.asarray(box, dtype=np.float32).reshape(4)
+    x1, y1, x2, y2 = box.tolist()
+
+    if not (0 <= x1 < x2 < width and 0 <= y1 < y2 < height):
+        raise ValueError("Invalid bounding box coordinates.")
+
+    model = build_sam2(
+        config,
+        str(checkpoint),
+        device=device,
+    )
+    predictor = SAM2ImagePredictor(model)
+
+    try:
+        with torch.inference_mode():
+            predictor.set_image(image)
+            masks, scores, _ = predictor.predict(
+                box=box,
+                multimask_output=True,
+            )
+
+        masks = np.asarray(masks, dtype=bool).copy()
+        scores = np.asarray(scores, dtype=np.float32).copy()
+
+        return masks, scores
+
+    finally:
+        del predictor, model
+
+        if str(device).startswith("cuda"):
+            torch.cuda.empty_cache()
+
 def run_selection(args):
     """Load a numbered candidate and save its automatically refined mask."""
     candidates_dir = args.output / "candidates"
