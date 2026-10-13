@@ -1,6 +1,8 @@
+diff --git a/arguments/__init__.py b/arguments/__init__.py
+index 0b2f448..888d0a0 100644
 --- a/arguments/__init__.py
 +++ b/arguments/__init__.py
-@@ -97,6 +97,11 @@
+@@ -97,6 +97,11 @@ class OptimizationParams(ParamGroup):
          self.depth_l1_weight_final = 0.01
          self.random_background = False
          self.optimizer_type = "default"
@@ -12,9 +14,72 @@
          super().__init__(parser, "Optimization Parameters")
  
  def get_combined_args(parser : ArgumentParser):
+diff --git a/scene/cameras.py b/scene/cameras.py
+index 63161b9..761a7f6 100644
+--- a/scene/cameras.py
++++ b/scene/cameras.py
+@@ -1,3 +1,5 @@
++from PIL import Image
++import os
+ #
+ # Copyright (C) 2023, Inria
+ # GRAPHDECO research group, https://team.inria.fr/graphdeco
+@@ -41,11 +43,23 @@ class Camera(nn.Module):
+ 
+         resized_image_rgb = PILtoTorch(image, resolution)
+         gt_image = resized_image_rgb[:3, ...]
++        # Object mask for object-only GS training.
++        # Expected location: <scene>/masks/<image_stem>.png
+         self.alpha_mask = None
+-        if resized_image_rgb.shape[0] == 4:
++
++        mask_path = image.filename.replace("/images/", "/masks/")
++        mask_path = os.path.splitext(mask_path)[0] + ".png"
++
++        if os.path.exists(mask_path):
++            mask_pil = Image.open(mask_path).convert("L")
++            self.alpha_mask = PILtoTorch(mask_pil, resolution)[:1, ...].to(self.data_device)
++            print(f"[OBJECT MASK] {image_name}: mean={self.alpha_mask.mean().item():.4f}, size={tuple(self.alpha_mask.shape)}")
++        elif resized_image_rgb.shape[0] == 4:
+             self.alpha_mask = resized_image_rgb[3:4, ...].to(self.data_device)
+-        else: 
+-            self.alpha_mask = torch.ones_like(resized_image_rgb[0:1, ...].to(self.data_device))
++        else:
++            self.alpha_mask = torch.ones_like(
++                resized_image_rgb[0:1, ...].to(self.data_device)
++            )
+ 
+         if train_test_exp and is_test_view:
+             if is_test_dataset:
+diff --git a/scene/gaussian_model.py b/scene/gaussian_model.py
+index 473887d..c78ae8c 100644
+--- a/scene/gaussian_model.py
++++ b/scene/gaussian_model.py
+@@ -468,6 +468,17 @@ class GaussianModel:
+ 
+         torch.cuda.empty_cache()
+ 
+-    def add_densification_stats(self, viewspace_point_tensor, update_filter):
+-        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
++    def add_densification_stats(self, viewspace_point_tensor, update_filter, grad_scale=1.0):
++        grad = torch.norm(
++            viewspace_point_tensor.grad[update_filter, :2],
++            dim=-1,
++            keepdim=True
++        )
++
++        # Object-mask loss is normalized by foreground area rather than
++        # full image area. Rescale only the densification signal back
++        # toward the original full-image gradient scale.
++        grad = grad * grad_scale
++
++        self.xyz_gradient_accum[update_filter] += grad
+         self.denom[update_filter] += 1
+diff --git a/train.py b/train.py
+index 8206903..c04c15b 100644
 --- a/train.py
 +++ b/train.py
-@@ -111,19 +111,37 @@
+@@ -111,19 +111,37 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
          render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
          image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
  
@@ -64,7 +129,7 @@
  
          # Depth regularization
          Ll1depth_pure = 0.0
-@@ -164,7 +182,21 @@
+@@ -164,7 +182,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
              if iteration < opt.densify_until_iter:
                  # Keep track of max radii in image-space for pruning
                  gaussians.max_radii2D[visibility_filter] = torch.max(gaussians.max_radii2D[visibility_filter], radii[visibility_filter])
@@ -87,60 +152,65 @@
  
                  if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                      size_threshold = 20 if iteration > opt.opacity_reset_interval else None
---- a/scene/cameras.py
-+++ b/scene/cameras.py
-@@ -1,3 +1,5 @@
-+from PIL import Image
-+import os
- #
- # Copyright (C) 2023, Inria
- # GRAPHDECO research group, https://team.inria.fr/graphdeco
-@@ -41,11 +43,23 @@
- 
-         resized_image_rgb = PILtoTorch(image, resolution)
-         gt_image = resized_image_rgb[:3, ...]
-+        # Object mask for object-only GS training.
-+        # Expected location: <scene>/masks/<image_stem>.png
-         self.alpha_mask = None
--        if resized_image_rgb.shape[0] == 4:
+@@ -227,6 +259,9 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
+             if config['cameras'] and len(config['cameras']) > 0:
+                 l1_test = 0.0
+                 psnr_test = 0.0
++                object_l1_total = 0.0
++                object_psnr_total = 0.0
++                object_view_count = 0
+                 for idx, viewpoint in enumerate(config['cameras']):
+                     image = torch.clamp(renderFunc(viewpoint, scene.gaussians, *renderArgs)["render"], 0.0, 1.0)
+                     gt_image = torch.clamp(viewpoint.original_image.to("cuda"), 0.0, 1.0)
+@@ -239,9 +274,50 @@ def training_report(tb_writer, iteration, Ll1, loss, l1_loss, elapsed, testing_i
+                             tb_writer.add_images(config['name'] + "_view_{}/ground_truth".format(viewpoint.image_name), gt_image[None], global_step=iteration)
+                     l1_test += l1_loss(image, gt_image).mean().double()
+                     psnr_test += psnr(image, gt_image).mean().double()
 +
-+        mask_path = image.filename.replace("/images/", "/masks/")
-+        mask_path = os.path.splitext(mask_path)[0] + ".png"
++                    # Object-only evaluation, normalized by foreground area.
++                    mask = viewpoint.alpha_mask.to(image.device).clamp(0.0, 1.0)
++                    if train_test_exp:
++                        mask = mask[..., mask.shape[-1] // 2:]
 +
-+        if os.path.exists(mask_path):
-+            mask_pil = Image.open(mask_path).convert("L")
-+            self.alpha_mask = PILtoTorch(mask_pil, resolution)[:1, ...].to(self.data_device)
-+            print(f"[OBJECT MASK] {image_name}: mean={self.alpha_mask.mean().item():.4f}, size={tuple(self.alpha_mask.shape)}")
-+        elif resized_image_rgb.shape[0] == 4:
-             self.alpha_mask = resized_image_rgb[3:4, ...].to(self.data_device)
--        else: 
--            self.alpha_mask = torch.ones_like(resized_image_rgb[0:1, ...].to(self.data_device))
-+        else:
-+            self.alpha_mask = torch.ones_like(
-+                resized_image_rgb[0:1, ...].to(self.data_device)
-+            )
- 
-         if train_test_exp and is_test_view:
-             if is_test_dataset:
---- a/scene/gaussian_model.py
-+++ b/scene/gaussian_model.py
-@@ -468,6 +468,17 @@
- 
-         torch.cuda.empty_cache()
- 
--    def add_densification_stats(self, viewspace_point_tensor, update_filter):
--        self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
-+    def add_densification_stats(self, viewspace_point_tensor, update_filter, grad_scale=1.0):
-+        grad = torch.norm(
-+            viewspace_point_tensor.grad[update_filter, :2],
-+            dim=-1,
-+            keepdim=True
-+        )
++                    mask_pixels = mask.sum()
++                    if mask_pixels.item() > 0:
++                        diff = image - gt_image
++                        channels = image.shape[0]
++                        denominator = mask_pixels * channels
 +
-+        # Object-mask loss is normalized by foreground area rather than
-+        # full image area. Rescale only the densification signal back
-+        # toward the original full-image gradient scale.
-+        grad = grad * grad_scale
++                        object_l1 = (diff.abs() * mask).sum() / denominator
++                        object_mse = (diff.square() * mask).sum() / denominator
++                        object_psnr = -10.0 * torch.log10(
++                            object_mse.clamp_min(1e-10)
++                        )
 +
-+        self.xyz_gradient_accum[update_filter] += grad
-         self.denom[update_filter] += 1
++                        object_l1_total += object_l1.double()
++                        object_psnr_total += object_psnr.double()
++                        object_view_count += 1
++
+                 psnr_test /= len(config['cameras'])
+-                l1_test /= len(config['cameras'])          
++                l1_test /= len(config['cameras'])
+                 print("\n[ITER {}] Evaluating {}: L1 {} PSNR {}".format(iteration, config['name'], l1_test, psnr_test))
++
++                if object_view_count:
++                    object_l1_mean = object_l1_total / object_view_count
++                    object_psnr_mean = object_psnr_total / object_view_count
++                    print(
++                        f"[OBJECT EVAL] iter={iteration} split={config['name']} "
++                        f"L1={object_l1_mean.item():.6f} "
++                        f"PSNR={object_psnr_mean.item():.4f} "
++                        f"Views={object_view_count}"
++                    )
++                    if tb_writer:
++                        tb_writer.add_scalar(
++                            config['name'] + '/object_l1',
++                            object_l1_mean, iteration
++                        )
++                        tb_writer.add_scalar(
++                            config['name'] + '/object_psnr',
++                            object_psnr_mean, iteration
++                        )
+                 if tb_writer:
+                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - l1_loss', l1_test, iteration)
+                     tb_writer.add_scalar(config['name'] + '/loss_viewpoint - psnr', psnr_test, iteration)
